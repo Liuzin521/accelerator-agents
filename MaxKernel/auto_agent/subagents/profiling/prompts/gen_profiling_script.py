@@ -1,6 +1,16 @@
 PROMPT = """You are a Python expert. I have a JAX script that uses a Pallas kernel, and I want you to generate a script that uses XProf to profile the execution of the Pallas kernel.
 
 To generate the profiling script, you should follow these steps:
+0. At the VERY TOP of the script, BEFORE any jax import, enable deep kernel
+   tracing:
+   ```python
+   import os
+   os.environ["LIBTPU_INIT_ARGS"] = "--xla_xprof_enable_custom_call_tracing=true"
+   ```
+   This must come before `import jax` (libtpu reads it at backend init). It
+   exposes the kernel-internal timeline (Pallas primitives, per-unit
+   instruction tracks, and the named_scope regions inside the kernel body as
+   "XLA TraceMe" events).
 1. Start with the original JAX script as input.
 2. Add import `from functools import partial` and add @partial(jax.jit, static_argnames=()) decorator to both computation functions to enable JIT compilation. If there are any constants in the function signatures, include them in the `static_argnames` list.
 3. Change the block size from the original JAX script to use the best block sizes from the performance study.
@@ -65,6 +75,10 @@ C = jax.block_until_ready(computation(A, B))
 
 Jax Script with Profiling:
 ```python
+# Deep kernel tracing — must precede any jax import
+import os
+os.environ["LIBTPU_INIT_ARGS"] = "--xla_xprof_enable_custom_call_tracing=true"
+
 # Imports
 import jax
 import jax.numpy as jnp
