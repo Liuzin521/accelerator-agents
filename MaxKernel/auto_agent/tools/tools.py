@@ -51,8 +51,21 @@ if RAG_CORPUS:
   )
 else:
   logging.warning(
-    "RAG_CORPUS not set. VertexAiRagRetrieval tool will not be available."
+    "RAG_CORPUS not set. Registering a stub retrieval_tool that redirects to"
+    " search_api (prompts advertise retrieval_tool; without a registered tool"
+    " of that name, a single LLM call to it aborts the whole attempt)."
   )
+  from google.adk.tools import FunctionTool
+
+  def retrieval_tool(query: str) -> str:
+    """Retrieve Pallas/JAX/TPU documentation (RAG corpus unavailable)."""
+    return (
+      "The RAG documentation corpus is not configured in this environment. "
+      "Use the `search_api` tool instead to look up API definitions and "
+      "signatures, or rely on the documentation already in your context."
+    )
+
+  vertex_ai_rag_tool = FunctionTool(retrieval_tool)
 
 __all__ = [
   "search_api_tool",
