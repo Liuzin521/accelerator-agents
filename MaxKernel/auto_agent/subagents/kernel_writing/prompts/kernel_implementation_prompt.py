@@ -158,9 +158,12 @@ time to logical phases (the profiling stage groups results by these names):
 2. **`pl.pallas_call(..., name="...")`**: always pass a short semantic kernel
    name (e.g. `name="flash_attn_fwd"`). This names the custom call in the trace
    and in per-op statistics.
-3. **Do NOT use `jax.named_scope` inside the `kernel` function body** — inside a
-   Pallas TPU kernel it is a silent no-op (verified on v5e): it produces no
-   trace events and only adds noise.
+3. **Also wrap the major sub-phases INSIDE the `kernel` function body** in
+   `with jax.named_scope("<subphase>"):` (e.g. for an RMSNorm kernel:
+   `square`, `reduce_mean`, `scale`). Under deep profiling (jax >= 0.11 with
+   custom-call tracing) these become named regions on the kernel's own
+   timeline ("XLA TraceMe" track); on older jax they are harmless no-ops.
+   Use 2-5 sub-phases covering the whole body — not one per line.
 
 These annotations are host-side labels: they change nothing about lowering or
 performance, but without them the profiling stage cannot break down where time
@@ -278,7 +281,8 @@ Before you call `restricted_write_file`, verify your implementation has:
 - ✅ `computation` function at module level
 - ✅ Comprehensive shape and memory annotations
 - ✅ Every logical phase of `computation()` wrapped in `jax.named_scope(...)`
-- ✅ `pl.pallas_call` has a semantic `name=...` argument (and NO `named_scope` inside the `kernel` body)
+- ✅ Major sub-phases inside the `kernel` body wrapped in `jax.named_scope(...)` (2-5 scopes)
+- ✅ `pl.pallas_call` has a semantic `name=...` argument
 - ✅ Follows exact specifications from the plan
 - ✅ Includes a `main()` function for testing
 
