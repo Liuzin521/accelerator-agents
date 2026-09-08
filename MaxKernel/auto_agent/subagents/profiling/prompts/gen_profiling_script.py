@@ -8,6 +8,11 @@ To generate the profiling script, you should follow these steps:
 5. Start the profiler trace using `jax.profiler.start_trace('jax_trace', profiler_options=options)`. Do not change this line.
 6. Execute the computation 3 times inside a loop, ensuring that the computation is JAX-blocked until ready each time.
 7. Stop the profiler trace using `jax.profiler.stop_trace()`.
+8. **Preserve all namespace annotations from the original script**: keep every
+   `with jax.named_scope(...)` block and the `name=...` argument of
+   `pl.pallas_call` exactly as they are. These labels are what allows the
+   trace analysis to attribute device time per phase — never remove or rename
+   them when adapting the script for profiling.
 
 # Example
 Here is an example of how to add profiling to the existing JAX script:

@@ -147,6 +147,25 @@ When targeting TPU (which is the default for these kernels), you must follow the
 - **Block Spec Divisibility**: The Pallas TPU lowering requires that the last two dimensions of your block shape are divisible by **8 and 128** respectively, or that they match the array dimensions exactly.
 - **Rank Constraint**: The Pallas TPU lowering supports only blocks of rank **>= 1**. Do not generate zero-dimensional blocks.
 
+### Namespace Annotation Requirements (CRITICAL for profiling)
+Every kernel you write MUST be annotated so the XProf trace can attribute device
+time to logical phases (the profiling stage groups results by these names):
+
+1. **`jax.named_scope` around every logical phase of `computation()`**: wrap each
+   distinct phase (input preprocessing / the `pl.pallas_call` invocation /
+   postprocessing) in `with jax.named_scope("<phase_name>"):`. Use the exact
+   phase names from the optimization plan when the plan lists them.
+2. **`pl.pallas_call(..., name="...")`**: always pass a short semantic kernel
+   name (e.g. `name="flash_attn_fwd"`). This names the custom call in the trace
+   and in per-op statistics.
+3. **Do NOT use `jax.named_scope` inside the `kernel` function body** — inside a
+   Pallas TPU kernel it is a silent no-op (verified on v5e): it produces no
+   trace events and only adds noise.
+
+These annotations are host-side labels: they change nothing about lowering or
+performance, but without them the profiling stage cannot break down where time
+goes, and its feedback becomes useless.
+
 ### Important Notes
 - If you encounter any ambiguity in the plan, use your best judgment to resolve it rather than making assumptions or asking the user.
 - If the plan seems to have issues or contradictions, attempt to resolve them or proceed with the most logical approach. Do not stop to ask the user.
@@ -179,17 +198,27 @@ def computation(A: jnp.ndarray, B: jnp.ndarray, ...) -> jnp.ndarray:
     \"\"\"Sets up and invokes the Pallas kernel.\"\"\"
     # Set up block sizes, grid configuration, etc.
     bM, bK, bN = 128, 128, 128
-    
+
+    # Wrap each logical phase in jax.named_scope so the profiler can
+    # attribute device time per phase (see Namespace Annotation Requirements).
+    with jax.named_scope("preprocess"):
+        pass  # casts / reshapes / layout preparation, if any
+
     # Call the kernel via pallas_call
     # IMPORTANT: Always include debug=True for better error diagnostics
-    return pl.pallas_call(
-        kernel,
-        out_shape=jax.ShapeDtypeStruct(...),
-        grid=...,
-        in_specs=[...],
-        out_specs=...,
-        debug=True,  # Always enable for better compilation error messages
-    )(A, B, ...)
+    with jax.named_scope("pallas_kernel"):
+        out = pl.pallas_call(
+            kernel,
+            out_shape=jax.ShapeDtypeStruct(...),
+            grid=...,
+            in_specs=[...],
+            out_specs=...,
+            name="matmul_kernel",  # semantic name shown in the XProf trace
+            debug=True,  # Always enable for better compilation error messages
+        )(A, B, ...)
+
+    with jax.named_scope("postprocess"):
+        return out  # scaling / final casts, if any
 
 # Main function (REQUIRED - module level)
 def main():
@@ -248,6 +277,8 @@ Before you call `restricted_write_file`, verify your implementation has:
 - ✅ `kernel` function at module level
 - ✅ `computation` function at module level
 - ✅ Comprehensive shape and memory annotations
+- ✅ Every logical phase of `computation()` wrapped in `jax.named_scope(...)`
+- ✅ `pl.pallas_call` has a semantic `name=...` argument (and NO `named_scope` inside the `kernel` body)
 - ✅ Follows exact specifications from the plan
 - ✅ Includes a `main()` function for testing
 

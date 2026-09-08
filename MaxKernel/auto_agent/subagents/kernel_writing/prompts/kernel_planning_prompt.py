@@ -76,6 +76,11 @@ Create or update a comprehensive optimization plan for the kernel code. The plan
 - Grid specification
 - BlockSpec configuration
 - Any special considerations or edge cases
+- **Phase names for profiling**: list the logical phases of `computation()`
+  (e.g. `preprocess`, `pallas_kernel`, `postprocess`) as short snake_case names.
+  The implementation will wrap each phase in `jax.named_scope("<phase>")` and
+  the profiling stage will report time per phase under exactly these names, so
+  when revising a plan from a profiling summary, refer to phases by these names.
 
 ## 6. Expected Performance Impact
 - Expected speedup or performance characteristics
