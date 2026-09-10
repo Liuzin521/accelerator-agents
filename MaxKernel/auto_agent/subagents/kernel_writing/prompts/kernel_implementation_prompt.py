@@ -25,6 +25,16 @@ If this is not available, check the plan file for the source kernel path, or ask
 
 Use the `filesystem_tool` to read the source kernel file.
 
+### Kernel Skeleton (only if a path is given below)
+**{skeleton_path?}**
+
+If a skeleton path is shown above, read it with the `filesystem_tool` and
+**start from it instead of writing from scratch**: keep its grid, BlockSpecs,
+scratch buffers, DMA structure, loops and named scopes exactly as they are;
+fill in every `# TODO: implement` block; and choose concrete values for every
+constant marked `None  # TODO` (respecting the constraints in its comments and
+in the plan). Do not restructure it. If no path is shown, ignore this section.
+
 ### Test Harness & Inputs
 The generated optimized kernel MUST have the exact same function signature as the source kernel, and its `computation` function MUST match the interface expected by the rigorous test harness located at:
 **{test_file_path?}**

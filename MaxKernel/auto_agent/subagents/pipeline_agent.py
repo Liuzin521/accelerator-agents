@@ -116,9 +116,15 @@ class AutonomousPipelineAgent(BaseAgent):
         )
 
         # Step 1: Plan
-        logging.info(f"[{self.name}] Running PlanKernelAgent...")
-        async for event in self.plan_agent.run_async(ctx):
-          yield event
+        if iteration == 0 and ctx.session.state.get("ladder_plan_given"):
+          logging.info(
+            f"[{self.name}] Ladder {ctx.session.state.get('ladder_level')}: "
+            "expert plan pre-loaded; skipping PlanKernelAgent in iteration 0"
+          )
+        else:
+          logging.info(f"[{self.name}] Running PlanKernelAgent...")
+          async for event in self.plan_agent.run_async(ctx):
+            yield event
 
         self._clear_iteration_metrics(ctx)
 
@@ -201,9 +207,15 @@ class AutonomousPipelineAgent(BaseAgent):
           continue
 
         # Step 6: Profile
-        logging.info(f"[{self.name}] Running ProfileAgentOrchestrator...")
-        async for event in self.profile_agent.run_async(ctx):
-          yield event
+        if os.environ.get("LADDER_PROFILER", "on").lower() == "off":
+          logging.info(f"[{self.name}] LADDER_PROFILER=off: skipping profiling stage")
+          ctx.session.state["profiling_summary"] = (
+            "(profiling disabled for this run — no profiler feedback available)"
+          )
+        else:
+          logging.info(f"[{self.name}] Running ProfileAgentOrchestrator...")
+          async for event in self.profile_agent.run_async(ctx):
+            yield event
         if self._should_end_at_step(ctx, iteration, "profile"):
           yield self._create_history_event(ctx)
           self._update_timing_metrics(ctx, iteration)
@@ -393,6 +405,39 @@ class AutonomousPipelineAgent(BaseAgent):
         tl_time = sum(t["duration"] for t in it_m["tools"])
         it_m["framework_overhead"] = max(0.0, ag_time - (llm_time + tl_time))
 
+  def _setup_ladder_materials(self, ctx: InvocationContext, session_dir: str):
+    """Expert-knowledge ladder: pre-load the distilled plan (L1, L2) and the
+    kernel skeleton (L2) into the session dir. Case name is parsed from the
+    session id (session_<case>_attempt_<n>_<ts>); materials live under
+    $LADDER_DIR/<case>/. Files are copied into session_dir because the
+    filesystem tool is restricted to WORKDIR."""
+    level = os.environ.get("LADDER_LEVEL", "L0").upper()
+    ctx.session.state["ladder_level"] = level
+    if level not in ("L1", "L2"):
+      return
+    ladder_dir = os.environ.get("LADDER_DIR")
+    m = re.match(r"session_(.+)_attempt_\d+_\d+$", os.path.basename(session_dir))
+    if not ladder_dir or not m:
+      raise ValueError(
+        f"[{self.name}] LADDER_LEVEL={level} needs LADDER_DIR and a "
+        f"session_<case>_attempt_* session dir (got {session_dir})"
+      )
+    case_dir = os.path.join(ladder_dir, m.group(1))
+    plan_src = os.path.join(case_dir, "plan_L1.md")
+    if not os.path.exists(plan_src):
+      raise FileNotFoundError(f"[{self.name}] ladder plan missing: {plan_src}")
+    shutil.copy(plan_src, ctx.session.state["kernel_plan_path"])
+    ctx.session.state["ladder_plan_given"] = True
+    logging.info(f"[{self.name}] Ladder {level}: plan pre-loaded from {plan_src}")
+    if level == "L2":
+      sk_src = os.path.join(case_dir, "skeleton_L2.py")
+      if not os.path.exists(sk_src):
+        raise FileNotFoundError(f"[{self.name}] ladder skeleton missing: {sk_src}")
+      sk_dst = os.path.join(session_dir, "skeleton_L2.py")
+      shutil.copy(sk_src, sk_dst)
+      ctx.session.state["skeleton_path"] = sk_dst
+      logging.info(f"[{self.name}] Ladder L2: skeleton pre-loaded -> {sk_dst}")
+
   def _initialize_state(self, ctx: InvocationContext) -> Event:
     if "timing_metrics" not in ctx.session.state:
       ctx.session.state["timing_metrics"] = {
@@ -468,6 +513,8 @@ class AutonomousPipelineAgent(BaseAgent):
       logging.info(
         f"[{self.name}] Set kernel_plan_path: {ctx.session.state['kernel_plan_path']}"
       )
+
+    self._setup_ladder_materials(ctx, session_dir)
 
     if "test_file_path" not in ctx.session.state:
       ctx.session.state["test_file_path"] = os.path.join(

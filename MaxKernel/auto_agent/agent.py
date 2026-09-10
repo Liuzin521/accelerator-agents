@@ -104,7 +104,12 @@ def create_root_agent(
   return agent
 
 
-root_agent = create_root_agent()
+# Expert-knowledge ladder: LADDER_ITER=1 is the single-shot "L0" rung.
+import os as _os
+
+root_agent = create_root_agent(
+  max_iterations=int(_os.environ.get("LADDER_ITER", "5"))
+)
 
 if EVENTS_COMPACTION:
   compaction_config = get_compaction_config()
