@@ -32,6 +32,15 @@ def create_root_agent(
   atol: Optional[float] = None,
   rtol: Optional[float] = None,
 ) -> AutonomousPipelineAgent:
+  # Expert-knowledge ladder overrides. Read here (not at module level) because
+  # the batch client builds its own agent via create_root_agent() in-process;
+  # the adk api_server's module-level root_agent is not what batch runs use.
+  #   LADDER_ITER=N          main-loop iterations (1 = single-shot rung)
+  #   LADDER_END_AGENT=step  stop each iteration after that step (dry runs)
+  import os as _os
+  max_iterations = int(_os.environ.get("LADDER_ITER", max_iterations))
+  end_agent = end_agent or _os.environ.get("LADDER_END_AGENT") or None
+
   agent = AutonomousPipelineAgent(
     name="AutonomousPipelineAgent",
     prepare_base_kernel_agent=prepare_base_kernel_agent,
@@ -104,15 +113,7 @@ def create_root_agent(
   return agent
 
 
-# Expert-knowledge ladder: LADDER_ITER=1 is the single-shot "L0" rung.
-import os as _os
-
-# LADDER_END_AGENT=plan|implement|validate|test_run|autotune|profile stops each
-# iteration after that step (dry runs: verify the level's materials landed).
-root_agent = create_root_agent(
-  max_iterations=int(_os.environ.get("LADDER_ITER", "5")),
-  end_agent=_os.environ.get("LADDER_END_AGENT") or None,
-)
+root_agent = create_root_agent()
 
 if EVENTS_COMPACTION:
   compaction_config = get_compaction_config()
