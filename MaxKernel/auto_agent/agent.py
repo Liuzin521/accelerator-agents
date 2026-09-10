@@ -107,8 +107,11 @@ def create_root_agent(
 # Expert-knowledge ladder: LADDER_ITER=1 is the single-shot "L0" rung.
 import os as _os
 
+# LADDER_END_AGENT=plan|implement|validate|test_run|autotune|profile stops each
+# iteration after that step (dry runs: verify the level's materials landed).
 root_agent = create_root_agent(
-  max_iterations=int(_os.environ.get("LADDER_ITER", "5"))
+  max_iterations=int(_os.environ.get("LADDER_ITER", "5")),
+  end_agent=_os.environ.get("LADDER_END_AGENT") or None,
 )
 
 if EVENTS_COMPACTION:
