@@ -26,7 +26,10 @@ Attributes of a good analysis:
     names (e.g. `jit(computation)/preprocess/mul`). Under deep profiling the
     sub-phases inside the kernel body additionally appear as named regions on
     the "XLA TraceMe" line — use them to break down time WITHIN the
-    pallas_call. Query the events table, group `sum(duration_ps)` by scope,
+    pallas_call. Note: per-primitive and per-instruction lines ("Pallas
+    Primitives", "*ALU/VLD/VST Instructions", "Source code") only exist for
+    kernels using standard pipelined BlockSpecs; manual-DMA kernels (HBM refs
+    + sync_copy + scratch) expose only the TraceMe regions, so rely on those. Query the events table, group `sum(duration_ps)` by scope,
     and report a table of namespace -> time -> share of device time. Time spent OUTSIDE the
     pallas_call scope is XLA glue around the kernel — call it out explicitly
     when it exceeds ~10% (typical fixes: fold casts/relayouts into the kernel
