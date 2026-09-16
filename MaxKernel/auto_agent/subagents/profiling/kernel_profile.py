@@ -1,5 +1,6 @@
 import base64
 import logging
+import os
 from typing import AsyncGenerator, Callable, Optional
 
 import aiohttp
@@ -10,8 +11,30 @@ from google.adk.events import Event, EventActions
 from auto_agent.client_utils.eval_client import call_eval_server_async
 from auto_agent.constants import EVAL_SERVER_PORT, REQUEST_TIMEOUT
 
-PROFILE_TIMEOUT = 120
+# 7p at benchmark size under deep tracing needs ~2 min; 120 s sat on the edge
+# (ladder batch 2026-09-11: one seed killed, one finished at 110-120 s). Default
+# 30 min, override with LADDER_PROFILE_TIMEOUT.
+PROFILE_TIMEOUT = int(os.environ.get("LADDER_PROFILE_TIMEOUT", 1800))
 PROFILE_POLL_INTERVAL = 20
+
+
+PROFILER_UNAVAILABLE_SUMMARY = (
+  "PROFILER UNAVAILABLE THIS ITERATION (toolchain failure, not a property of "
+  "the kernel): {reason}\n"
+  "No xplane / trace was produced, so there is no profiling feedback. Do NOT "
+  "change the kernel, its jax.named_scope annotations, or the plan to "
+  "accommodate profiling; plan only from the compilation, test and autotune "
+  "results."
+)
+
+
+def _failure_delta(output_key: str, full_error: str) -> dict:
+  return {
+    output_key: full_error,
+    "profiling_failed": True,
+    "profiling_failure_reason": full_error[:300],
+    "profiling_summary": PROFILER_UNAVAILABLE_SUMMARY.format(reason=full_error[:300]),
+  }
 
 
 class KernelProfiler(BaseAgent):
@@ -83,7 +106,7 @@ class KernelProfiler(BaseAgent):
           logging.error(f"[{self.name}] {full_error}")
           yield Event(
             author=self.name,
-            actions=EventActions(state_delta={self.output_key: full_error}),
+            actions=EventActions(state_delta=_failure_delta(self.output_key, full_error)),
           )
         elif not output or output.strip() == "":
           full_error = "Profiling script produced no output"
@@ -92,7 +115,7 @@ class KernelProfiler(BaseAgent):
           logging.error(f"[{self.name}] {full_error}")
           yield Event(
             author=self.name,
-            actions=EventActions(state_delta={self.output_key: full_error}),
+            actions=EventActions(state_delta=_failure_delta(self.output_key, full_error)),
           )
         else:
           # Successful profiling - parse the ratio and xplane path
@@ -161,7 +184,7 @@ class KernelProfiler(BaseAgent):
             yield Event(
               author=self.name,
               actions=EventActions(
-                state_delta={self.output_key: error_msg_full}
+                state_delta=_failure_delta(self.output_key, error_msg_full)
               ),
             )
     except Exception as e:
@@ -169,8 +192,8 @@ class KernelProfiler(BaseAgent):
       yield Event(
         author=self.name,
         actions=EventActions(
-          state_delta={
-            self.output_key: f"Exception during code execution: {str(e)}"
-          }
+          state_delta=_failure_delta(
+            self.output_key, f"Exception during code execution: {str(e)}"
+          )
         ),
       )

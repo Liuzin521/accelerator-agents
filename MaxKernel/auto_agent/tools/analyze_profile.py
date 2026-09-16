@@ -24,6 +24,21 @@ def analyze_trace(path):
       if "jit_computation" in event.get("name", None):
         jit_computation_events.append(event)
 
+  if pid is None or len(jit_computation_events) < 2:
+    names = {}
+    for e in events_for_tpu_0:
+      n = e.get("name") or ""
+      names[n] = names.get(n, 0) + 1
+    top = sorted(names.items(), key=lambda kv: -kv[1])[:8]
+    raise RuntimeError(
+      "trace has no usable jit_computation events on /device:TPU:0 "
+      f"(pid={pid}, jit_computation events={len(jit_computation_events)}, "
+      f"device events={len(events_for_tpu_0)}, total events={len(events)}, "
+      f"top device names={top}). Likely causes: the traced function is not "
+      "named `computation`, the trace was truncated (deep tracing on a large "
+      "kernel), or the profiler stopped before the traced runs finished."
+    )
+
   start_last = (
     jit_computation_events[-2]["ts"] + jit_computation_events[-2]["dur"]
   )

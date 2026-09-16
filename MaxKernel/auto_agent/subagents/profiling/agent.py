@@ -1,6 +1,7 @@
 """Profiling subagent - performance profiling and analysis."""
 
 import logging
+import os
 from typing import AsyncGenerator
 
 from google.adk.agents import SequentialAgent
@@ -15,6 +16,9 @@ from auto_agent.config import get_thinking_planner, model_config
 from auto_agent.constants import MODEL_NAME
 from auto_agent.custom_types import CustomLlmAgent
 from auto_agent.subagents.profiling import offline_tools
+from auto_agent.subagents.profiling.assemble_profiling_script import (
+  AssembleProfilingScript,
+)
 from auto_agent.subagents.profiling.kernel_profile import KernelProfiler
 from auto_agent.subagents.profiling.prompts import (
   analyze_profile_prompt,
@@ -84,6 +88,23 @@ class SummarizeProfileAgent(CustomLlmAgent):
   async def _run_async_impl(
     self, ctx: InvocationContext
   ) -> AsyncGenerator[Event, None]:
+    # 0. Profiler did not run / produced no trace: do not ask the LLM to
+    #    "analyze" an error message. KernelProfiler already wrote a fixed
+    #    PROFILER-UNAVAILABLE summary that tells the planner to ignore it.
+    #    (Ladder batch 2026-09-11: the LLM summary of a profiler failure sent
+    #    PlanKernelAgent off to "fix" the kernel for the profiler, breaking a
+    #    correct kernel for 2-3 iterations.)
+    if ctx.session.state.get("profiling_failed"):
+      logging.warning(
+        f"[{self.name}] profiling_failed=True — skipping LLM summary; reason: "
+        f"{ctx.session.state.get('profiling_failure_reason', '')[:200]}"
+      )
+      yield Event(
+        author=self.name,
+        actions=EventActions(state_delta={"needs_improvement": True}),
+      )
+      return
+
     # 1. Run the normal LLM summary generation
     async for event in super()._run_async_impl(ctx):
       yield event
@@ -155,11 +176,20 @@ summarize_profile_agent = create_summarize_profile_agent()
 
 # Main profiling orchestrator agent
 def create_profile_agent(model_name: str = MODEL_NAME) -> SequentialAgent:
-  return SequentialAgent(
-    name="ProfileAgentOrchestrator",
-    sub_agents=[
+  # Default: deterministic assembly of the profiling script (kernel + the
+  # harness test file's benchmark inputs + fixed epilogue). Set
+  # LADDER_PROFILE_SCRIPT=llm to fall back to the LLM-written script.
+  if os.environ.get("LADDER_PROFILE_SCRIPT", "assemble").lower() == "llm":
+    script_agents = [
       create_generate_profiling_script_agent(model_name),
       create_read_profiling_script_agent(model_name),
+    ]
+  else:
+    script_agents = [AssembleProfilingScript(name="AssembleProfilingScript")]
+  return SequentialAgent(
+    name="ProfileAgentOrchestrator",
+    sub_agents=script_agents
+    + [
       create_eval_profile_agent(),
       create_summarize_profile_agent(model_name),
     ],
