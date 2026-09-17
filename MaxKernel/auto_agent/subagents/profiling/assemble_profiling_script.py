@@ -28,9 +28,12 @@ from google.adk.events import Event, EventActions
 
 TRACE_ITERS_DEFAULT = 3
 
-_HEADER = '''# Deep kernel tracing — must precede any jax import
+_HEADER_DEEP = '''# Deep kernel tracing — must precede any jax import
 import os
 os.environ["LIBTPU_INIT_ARGS"] = "--xla_xprof_enable_custom_call_tracing=true"
+'''
+_HEADER_SHALLOW = '''# Deep kernel tracing DISABLED for this script (LADDER_DEEP_TRACE=off)
+import os
 '''
 
 _EPILOGUE = '''
@@ -67,7 +70,51 @@ def _ladder_pick_inputs():
     raise RuntimeError("profiling script: neither get_inputs() nor create_inputs() defined")
 
 
+def _ladder_rss_watchdog(cap_gb):
+    """Abort the process before the host swaps itself to death: deep tracing
+    of a large kernel accumulates the trace in host RAM (2026-09-16: a 7p
+    expert-kernel profile made the v5e VM unreachable). Polls RSS every 2 s."""
+    import threading
+
+    def _rss_gb():
+        try:
+            with open("/proc/self/status") as f:
+                for line in f:
+                    if line.startswith("VmRSS:"):
+                        return int(line.split()[1]) / 1e6
+        except OSError:
+            pass
+        return 0.0
+
+    def _loop():
+        while True:
+            _time.sleep(2)
+            rss = _rss_gb()
+            if rss > cap_gb:
+                print(f"[ladder-profile] RSS {rss:.1f} GB > cap {cap_gb:.1f} GB — aborting "
+                      "(trace too large for host memory)", flush=True)
+                os._exit(97)
+
+    threading.Thread(target=_loop, daemon=True).start()
+
+
+def _ladder_mem_total_gb():
+    try:
+        with open("/proc/meminfo") as f:
+            for line in f:
+                if line.startswith("MemTotal:"):
+                    return int(line.split()[1]) / 1e6
+    except OSError:
+        pass
+    return 0.0
+
+
 def _ladder_profile_main():
+    cap = float(os.environ.get("LADDER_PROFILE_RSS_CAP_GB", 0) or 0)
+    if cap <= 0:
+        cap = 0.6 * _ladder_mem_total_gb() or 64.0
+    _ladder_rss_watchdog(cap)
+    print(f"[ladder-profile] host MemTotal {_ladder_mem_total_gb():.0f} GB, RSS cap {cap:.0f} GB", flush=True)
     fn = _jax.jit(_ladder_pick_fn())
     args, kwargs = _ladder_pick_inputs()
     t0 = _time.perf_counter()
@@ -154,12 +201,19 @@ def _strip_inputs_file(src: str) -> str:
   )
 
 
-def assemble(kernel_src: str, inputs_src: str, trace_iters: int = TRACE_ITERS_DEFAULT) -> str:
-  """Pure function: kernel source + inputs source -> profiling script."""
+def assemble(
+  kernel_src: str,
+  inputs_src: str,
+  trace_iters: int = TRACE_ITERS_DEFAULT,
+  deep_trace: bool = True,
+) -> str:
+  """Pure function: kernel source + inputs source -> profiling script.
+  deep_trace=False drops the LIBTPU custom-call-tracing flag (no kernel-internal
+  named_scope events, but a much smaller trace) — used by the gate's light probe."""
   kernel = _strip_main_guard(kernel_src)
   inputs = _strip_inputs_file(_strip_main_guard(inputs_src))
   return (
-    _HEADER
+    (_HEADER_DEEP if deep_trace else _HEADER_SHALLOW)
     + "\n# ---- kernel (verbatim: optimized_kernel.py) ----\n"
     + kernel
     + "\n\n# ---- benchmark inputs (verbatim: harness test file) ----\n"
@@ -179,20 +233,21 @@ class AssembleProfilingScript(BaseAgent):
     inputs_path = st.get("test_file_path")
     out_path = st.get("profiling_script_path")
     trace_iters = int(os.environ.get("LADDER_PROFILE_TRACE_ITERS", TRACE_ITERS_DEFAULT))
+    deep = os.environ.get("LADDER_DEEP_TRACE", "on").lower() != "off"
     delta = {"profiling_failed": False, "profiling_failure_reason": ""}
     try:
       with open(kernel_path) as f:
         kernel_src = f.read()
       with open(inputs_path) as f:
         inputs_src = f.read()
-      script = assemble(kernel_src, inputs_src, trace_iters)
+      script = assemble(kernel_src, inputs_src, trace_iters, deep_trace=deep)
       with open(out_path, "w") as f:
         f.write(script)
       delta["profiling_script"] = script
       logging.info(
         f"[{self.name}] Assembled profiling script -> {out_path} "
         f"(kernel {len(kernel_src)} B + inputs {len(inputs_src)} B, "
-        f"trace_iters={trace_iters})"
+        f"trace_iters={trace_iters}, deep_trace={deep})"
       )
     except Exception as e:  # noqa: BLE001
       msg = f"could not assemble profiling script: {e}"
