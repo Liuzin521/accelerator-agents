@@ -115,7 +115,12 @@ def _ladder_profile_main():
         cap = 0.6 * _ladder_mem_total_gb() or 64.0
     _ladder_rss_watchdog(cap)
     print(f"[ladder-profile] host MemTotal {_ladder_mem_total_gb():.0f} GB, RSS cap {cap:.0f} GB", flush=True)
-    fn = _jax.jit(_ladder_pick_fn())
+    _picked = _ladder_pick_fn()
+    # tools/analyze_profile.py keys on device events named `jit_computation`;
+    # JAXBench kernels define workload(), which would trace as `jit_workload`.
+    def computation(*a, **kw):
+        return _picked(*a, **kw)
+    fn = _jax.jit(computation)
     args, kwargs = _ladder_pick_inputs()
     t0 = _time.perf_counter()
     _jax.block_until_ready(fn(*args, **kwargs))      # compile + warm-up, outside the trace
