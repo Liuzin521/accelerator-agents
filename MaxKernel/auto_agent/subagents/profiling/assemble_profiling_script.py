@@ -26,6 +26,8 @@ from google.adk.agents import BaseAgent
 from google.adk.agents.invocation_context import InvocationContext
 from google.adk.events import Event, EventActions
 
+from auto_agent.ladder_switches import deep_trace_enabled
+
 TRACE_ITERS_DEFAULT = 3
 
 _HEADER_DEEP = '''# Deep kernel tracing — must precede any jax import
@@ -238,7 +240,7 @@ class AssembleProfilingScript(BaseAgent):
     inputs_path = st.get("test_file_path")
     out_path = st.get("profiling_script_path")
     trace_iters = int(os.environ.get("LADDER_PROFILE_TRACE_ITERS", TRACE_ITERS_DEFAULT))
-    deep = os.environ.get("LADDER_DEEP_TRACE", "on").lower() != "off"
+    deep = deep_trace_enabled()
     delta = {"profiling_failed": False, "profiling_failure_reason": ""}
     try:
       with open(kernel_path) as f:

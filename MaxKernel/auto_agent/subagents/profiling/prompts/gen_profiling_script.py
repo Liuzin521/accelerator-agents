@@ -1,29 +1,14 @@
-PROMPT = """You are a Python expert. I have a JAX script that uses a Pallas kernel, and I want you to generate a script that uses XProf to profile the execution of the Pallas kernel.
+_TEMPLATE = """You are a Python expert. I have a JAX script that uses a Pallas kernel, and I want you to generate a script that uses XProf to profile the execution of the Pallas kernel.
 
 To generate the profiling script, you should follow these steps:
-0. At the VERY TOP of the script, BEFORE any jax import, enable deep kernel
-   tracing:
-   ```python
-   import os
-   os.environ["LIBTPU_INIT_ARGS"] = "--xla_xprof_enable_custom_call_tracing=true"
-   ```
-   This must come before `import jax` (libtpu reads it at backend init). It
-   exposes the kernel-internal timeline (Pallas primitives, per-unit
-   instruction tracks, and the named_scope regions inside the kernel body as
-   "XLA TraceMe" events).
-1. Start with the original JAX script as input.
+@@STEP0@@1. Start with the original JAX script as input.
 2. Add import `from functools import partial` and add @partial(jax.jit, static_argnames=()) decorator to both computation functions to enable JIT compilation. If there are any constants in the function signatures, include them in the `static_argnames` list.
 3. Change the block size from the original JAX script to use the best block sizes from the performance study.
 4. Define profiling options using `jax.profiler.ProfileOptions()`. Set `python_tracer_level` to 0, `host_tracer_level` to 2, and `advanced_configuration` to `{"tpu_trace_mode": "TRACE_COMPUTE_AND_SYNC"}`.
 5. Start the profiler trace using `jax.profiler.start_trace('jax_trace', profiler_options=options)`. Do not change this line.
 6. Execute the computation 3 times inside a loop, ensuring that the computation is JAX-blocked until ready each time.
 7. Stop the profiler trace using `jax.profiler.stop_trace()`.
-8. **Preserve all namespace annotations from the original script**: keep every
-   `with jax.named_scope(...)` block and the `name=...` argument of
-   `pl.pallas_call` exactly as they are. These labels are what allows the
-   trace analysis to attribute device time per phase — never remove or rename
-   them when adapting the script for profiling.
-
+@@STEP8@@
 # Example
 Here is an example of how to add profiling to the existing JAX script:
 
@@ -75,11 +60,7 @@ C = jax.block_until_ready(computation(A, B))
 
 Jax Script with Profiling:
 ```python
-# Deep kernel tracing — must precede any jax import
-import os
-os.environ["LIBTPU_INIT_ARGS"] = "--xla_xprof_enable_custom_call_tracing=true"
-
-# Imports
+@@EXAMPLE_HEADER@@# Imports
 import jax
 import jax.numpy as jnp
 import jax.random as random
@@ -143,3 +124,37 @@ Jax script:
 2. Use the `restricted_write_file` tool to save the profiling script
 3. After writing, confirm the file was saved successfully
 """
+
+# MK-Ours additions; dropped when LADDER_DEEP_TRACE=off (upstream wording).
+# Only used when LADDER_PROFILE_SCRIPT=llm (default is deterministic assembly).
+_STEP0 = """0. At the VERY TOP of the script, BEFORE any jax import, enable deep kernel
+   tracing:
+   ```python
+   import os
+   os.environ["LIBTPU_INIT_ARGS"] = "--xla_xprof_enable_custom_call_tracing=true"
+   ```
+   This must come before `import jax` (libtpu reads it at backend init). It
+   exposes the kernel-internal timeline (Pallas primitives, per-unit
+   instruction tracks, and the named_scope regions inside the kernel body as
+   "XLA TraceMe" events).
+"""
+_STEP8 = """8. **Preserve all namespace annotations from the original script**: keep every
+   `with jax.named_scope(...)` block and the `name=...` argument of
+   `pl.pallas_call` exactly as they are. These labels are what allows the
+   trace analysis to attribute device time per phase — never remove or rename
+   them when adapting the script for profiling.
+"""
+_EXAMPLE_HEADER = """# Deep kernel tracing — must precede any jax import
+import os
+os.environ["LIBTPU_INIT_ARGS"] = "--xla_xprof_enable_custom_call_tracing=true"
+
+"""
+
+from auto_agent.ladder_switches import deep_trace_enabled  # noqa: E402
+
+if deep_trace_enabled():
+  PROMPT = (_TEMPLATE.replace("@@STEP0@@", _STEP0).replace("@@STEP8@@", _STEP8)
+            .replace("@@EXAMPLE_HEADER@@", _EXAMPLE_HEADER))
+else:
+  PROMPT = (_TEMPLATE.replace("@@STEP0@@", "").replace("@@STEP8@@", "")
+            .replace("@@EXAMPLE_HEADER@@", ""))

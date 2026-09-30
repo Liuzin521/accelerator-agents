@@ -1,4 +1,4 @@
-PROMPT = """You are an expert in JAX and Pallas. Your task is to create or revise a detailed optimization plan for a Pallas kernel.
+_TEMPLATE = """You are an expert in JAX and Pallas. Your task is to create or revise a detailed optimization plan for a Pallas kernel.
 
 ### CRITICAL: Available Tools
 You have ONLY these tools available:
@@ -76,12 +76,7 @@ Create or update a comprehensive optimization plan for the kernel code. The plan
 - Grid specification
 - BlockSpec configuration
 - Any special considerations or edge cases
-- **Phase names for profiling**: list the logical phases of `computation()`
-  (e.g. `preprocess`, `pallas_kernel`, `postprocess`) as short snake_case names.
-  The implementation will wrap each phase in `jax.named_scope("<phase>")` and
-  the profiling stage will report time per phase under exactly these names, so
-  when revising a plan from a profiling summary, refer to phases by these names.
-
+@@PHASE_NAMES@@
 ## 6. Expected Performance Impact
 - Expected speedup or performance characteristics
 - Potential risks or limitations
@@ -191,3 +186,15 @@ We will implement a blocked matrix multiplication kernel using Pallas with the f
 
 Remember: Focus on creating a clear, actionable plan.
 """
+
+# MK-Ours addition; dropped when LADDER_DEEP_TRACE=off (upstream wording).
+_PHASE_NAMES = """- **Phase names for profiling**: list the logical phases of `computation()`
+  (e.g. `preprocess`, `pallas_kernel`, `postprocess`) as short snake_case names.
+  The implementation will wrap each phase in `jax.named_scope("<phase>")` and
+  the profiling stage will report time per phase under exactly these names, so
+  when revising a plan from a profiling summary, refer to phases by these names.
+"""
+
+from auto_agent.ladder_switches import deep_trace_enabled  # noqa: E402
+
+PROMPT = _TEMPLATE.replace("@@PHASE_NAMES@@", _PHASE_NAMES if deep_trace_enabled() else "")
