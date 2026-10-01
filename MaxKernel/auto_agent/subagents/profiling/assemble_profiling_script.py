@@ -38,6 +38,22 @@ _HEADER_SHALLOW = '''# Deep kernel tracing DISABLED for this script (LADDER_DEEP
 import os
 '''
 
+# Harness test files `import base_kernel` (FixTestScriptAgent patches
+# base_kernel.computation and calls base_kernel.create_inputs()), but the
+# profiling script is executed as ONE file in a temp dir of the eval server, so
+# that import died with ModuleNotFoundError in every profiling attempt of the
+# 2026-09-30 batch (10/10). Embed the base kernel as a real module instead.
+_BASE_KERNEL_SHIM = '''
+# ---- base_kernel module (embedded verbatim: base_kernel.py) ----
+import sys as _sys
+import types as _types
+_bk = _types.ModuleType("base_kernel")
+_bk.__file__ = "base_kernel.py"
+_sys.modules["base_kernel"] = _bk
+exec(compile(__BASE_KERNEL_SRC__, "base_kernel.py", "exec"), _bk.__dict__)
+_sys.modules.setdefault("optimized_kernel", _sys.modules[__name__])
+'''
+
 _EPILOGUE = '''
 
 # ---------------------------------------------------------------------------
@@ -213,16 +229,21 @@ def assemble(
   inputs_src: str,
   trace_iters: int = TRACE_ITERS_DEFAULT,
   deep_trace: bool = True,
+  base_kernel_src: str | None = None,
 ) -> str:
   """Pure function: kernel source + inputs source -> profiling script.
   deep_trace=False drops the LIBTPU custom-call-tracing flag (no kernel-internal
   named_scope events, but a much smaller trace) — used by the gate's light probe."""
   kernel = _strip_main_guard(kernel_src)
   inputs = _strip_inputs_file(_strip_main_guard(inputs_src))
+  shim = ""
+  if base_kernel_src is not None and "base_kernel" in inputs:
+    shim = _BASE_KERNEL_SHIM.replace("__BASE_KERNEL_SRC__", repr(base_kernel_src))
   return (
     (_HEADER_DEEP if deep_trace else _HEADER_SHALLOW)
     + "\n# ---- kernel (verbatim: optimized_kernel.py) ----\n"
     + kernel
+    + shim
     + "\n\n# ---- benchmark inputs (verbatim: harness test file) ----\n"
     + inputs
     + _EPILOGUE.replace("__TRACE_ITERS__", str(int(trace_iters)))
@@ -247,14 +268,22 @@ class AssembleProfilingScript(BaseAgent):
         kernel_src = f.read()
       with open(inputs_path) as f:
         inputs_src = f.read()
-      script = assemble(kernel_src, inputs_src, trace_iters, deep_trace=deep)
+      base_src = None
+      base_path = st.get("base_kernel_path")
+      if base_path and os.path.exists(base_path):
+        with open(base_path) as f:
+          base_src = f.read()
+      script = assemble(
+        kernel_src, inputs_src, trace_iters, deep_trace=deep, base_kernel_src=base_src
+      )
       with open(out_path, "w") as f:
         f.write(script)
       delta["profiling_script"] = script
       logging.info(
         f"[{self.name}] Assembled profiling script -> {out_path} "
         f"(kernel {len(kernel_src)} B + inputs {len(inputs_src)} B, "
-        f"trace_iters={trace_iters}, deep_trace={deep})"
+        f"trace_iters={trace_iters}, deep_trace={deep}, "
+        f"base_kernel_embedded={'base_kernel.py' in script})"
       )
     except Exception as e:  # noqa: BLE001
       msg = f"could not assemble profiling script: {e}"
