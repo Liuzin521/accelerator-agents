@@ -194,7 +194,7 @@ def _strip_main_guard(src: str) -> str:
 _INPUTS_DROP_DEFS = {"workload", "computation", "kernel", "benchmark", "main", "get_flops"}
 
 
-def _strip_inputs_file(src: str) -> str:
+def _strip_inputs_file(src: str, keep_mock_imports: bool = False) -> str:
   """Keep only what the inputs file contributes: imports, constants and the
   input builder. Drop (a) the mock-execution `base_mod` try-block of harness
   test files, (b) any top-level function that would shadow the kernel's
@@ -207,7 +207,12 @@ def _strip_inputs_file(src: str) -> str:
   drop = []
   for node in tree.body:
     seg = ast.get_source_segment(src, node) or ""
-    if isinstance(node, ast.Try) and "base_mod" in seg:
+    if isinstance(node, ast.Try) and "base_mod" in seg and not keep_mock_imports:
+      # With the base kernel embedded as a real module (keep_mock_imports), these
+      # `import base_kernel as base_mod` / `import optimized_kernel as optimized_mod`
+      # blocks resolve, and top-level statements that use base_mod (e.g. the
+      # computation alias the fixer adds outside the try) keep working. Dropping
+      # them left `base_mod` undefined (NameError, 2026-10-04 L1+dma run).
       drop.append((node.lineno, node.end_lineno))
     elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in _INPUTS_DROP_DEFS:
       drop.append((node.lineno, node.end_lineno))
@@ -235,10 +240,10 @@ def assemble(
   deep_trace=False drops the LIBTPU custom-call-tracing flag (no kernel-internal
   named_scope events, but a much smaller trace) — used by the gate's light probe."""
   kernel = _strip_main_guard(kernel_src)
-  inputs = _strip_inputs_file(_strip_main_guard(inputs_src))
-  shim = ""
-  if base_kernel_src is not None and "base_kernel" in inputs:
-    shim = _BASE_KERNEL_SHIM.replace("__BASE_KERNEL_SRC__", repr(base_kernel_src))
+  raw_inputs = _strip_main_guard(inputs_src)
+  embed = base_kernel_src is not None and "base_kernel" in raw_inputs
+  inputs = _strip_inputs_file(raw_inputs, keep_mock_imports=embed)
+  shim = _BASE_KERNEL_SHIM.replace("__BASE_KERNEL_SRC__", repr(base_kernel_src)) if embed else ""
   return (
     (_HEADER_DEEP if deep_trace else _HEADER_SHALLOW)
     + "\n# ---- kernel (verbatim: optimized_kernel.py) ----\n"
