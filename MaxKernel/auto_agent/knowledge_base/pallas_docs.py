@@ -3280,3 +3280,7 @@ By The JAX authors
 
 
 '''
+
+# Expert-knowledge ladder: optional problem-agnostic usage cards (LADDER_CARDS env).
+from auto_agent.ladder_switches import ladder_cards_text as _ladder_cards_text  # noqa: E402
+PROMPT = PROMPT + _ladder_cards_text()
