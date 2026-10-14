@@ -331,3 +331,6 @@ else:
   PROMPT = (_TEMPLATE.replace("@@NS_SECTION@@", "")
             .replace("@@EXAMPLE_COMPUTATION@@", _EXAMPLE_COMPUTATION_UPSTREAM)
             .replace("@@NS_CHECKLIST@@", ""))
+
+# Knowledge-gap experiment: problem-agnostic usage cards (empty unless LADDER_CARDS is set).
+PROMPT = PROMPT + "\n\n{ladder_cards?}\n"

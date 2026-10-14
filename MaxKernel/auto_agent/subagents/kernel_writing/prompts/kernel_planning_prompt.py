@@ -198,3 +198,6 @@ _PHASE_NAMES = """- **Phase names for profiling**: list the logical phases of `c
 from auto_agent.ladder_switches import deep_trace_enabled  # noqa: E402
 
 PROMPT = _TEMPLATE.replace("@@PHASE_NAMES@@", _PHASE_NAMES if deep_trace_enabled() else "")
+
+# Knowledge-gap experiment: problem-agnostic usage cards (empty unless LADDER_CARDS is set).
+PROMPT = PROMPT + "\n\n{ladder_cards?}\n"

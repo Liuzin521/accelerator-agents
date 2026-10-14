@@ -16,6 +16,7 @@ from google.genai import types
 
 from auto_agent.config import TPU_VERSION, WORKDIR
 from auto_agent.knowledge_base import pallas_docs, pallas_profiling_docs
+from auto_agent.ladder_switches import ladder_cards_text
 
 
 class AutonomousPipelineAgent(BaseAgent):
@@ -472,6 +473,10 @@ class AutonomousPipelineAgent(BaseAgent):
 
     ctx.session.state["pallas_docs"] = pallas_docs.PROMPT
     ctx.session.state["pallas_profiling_docs"] = pallas_profiling_docs.PROMPT
+    # Knowledge-gap cards (LADDER_CARDS): interpolated into the plan / implement /
+    # fix-compilation prompts via the optional {ladder_cards?} placeholder.
+    # (pallas_docs is state-only in auto_agent: no sub-agent prompt reads it.)
+    ctx.session.state["ladder_cards"] = ladder_cards_text()
 
     # Path related states
     session_dir = self.session_dir or os.path.join(WORKDIR, ctx.session.id)
@@ -584,6 +589,7 @@ class AutonomousPipelineAgent(BaseAgent):
           "tpu_version": ctx.session.state.get("tpu_version"),
           "tpu_specs": ctx.session.state.get("tpu_specs"),
           "pallas_docs": ctx.session.state.get("pallas_docs"),
+          "ladder_cards": ctx.session.state.get("ladder_cards", ""),
           "pallas_profiling_docs": ctx.session.state.get(
             "pallas_profiling_docs"
           ),

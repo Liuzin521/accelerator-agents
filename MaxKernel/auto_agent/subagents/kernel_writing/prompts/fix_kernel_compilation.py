@@ -184,3 +184,6 @@ FIX_SUMMARY:
 - The goal is a compiling kernel that still achieves the planned optimizations
 - Compilation errors are often simple syntax/API issues that don't require strategy changes
 """
+
+# Knowledge-gap experiment: problem-agnostic usage cards (empty unless LADDER_CARDS is set).
+PROMPT = PROMPT + "\n\n{ladder_cards?}\n"
